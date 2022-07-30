@@ -1,0 +1,11 @@
+version: '3'
+services:
+  api:
+    build: .
+    ports:
+      - 8000:8000
+    links:
+      - postgres
+
+  postgres:
+    image: postgres:latest
