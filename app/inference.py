@@ -1,11 +1,16 @@
 import os
 from typing import Any, List, Iterator, Tuple
+from pydantic import BaseModel
 
 import torch
 import torchaudio
 import torchaudio.transforms as transforms
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from app.config import settings
+from app.database.base import Session
+from app.database.models import Prediction, MediaFile
+from fastapi.params import Depends
+from app.database.base import get_db
 import logging
 
 
@@ -28,14 +33,12 @@ class Model:
         return float(torch.rand(1))
 
 
-class Prediction(BaseModel):
+class PredictionModel(BaseModel):
     phrase: str
     time: int
     confidence: float
 
 
-MODEL_CONFIDENCE_THRESHOLD = 0.9
-SAMPLE_RATE = 8000
 MODEL_DICT = {
     "call": Model(),
     "is": Model(),
@@ -49,14 +52,14 @@ def root():
     return {"message": "Hello world"}
 
 
-@app.get("/api/detect/", response_model=List[Prediction])
-def generate_phrase_detections(utterance: str, audio_loc: str) -> Any:
+@app.get("/api/detect/", response_model=List[PredictionModel])
+def generate_phrase_detections(utterance: str, audio_path: str, db: Session = Depends(get_db)) -> Any:
     """Run inference on an audio file with a model for an utterance. Currently
     available utterances are: "call", "is", "recorded"
 
     Args:
         utterance: Case sensitive name of the model to be used for inference
-        audio_loc: The full or relative path to the audio file for which inference
+        audio_path: The full or relative path to the audio file for which inference
             is to be executed
     """
     try:
@@ -67,22 +70,42 @@ def generate_phrase_detections(utterance: str, audio_loc: str) -> Any:
         )
 
     try:
-        audio_loc = os.path.join(os.getcwd(), "audio", audio_loc)
-        resampled_audio = load_resampled(audio_loc, SAMPLE_RATE)
+        audio_loc = os.path.join(f"{os.getcwd()}/app", audio_path)
+        resampled_audio = load_resampled(audio_loc, settings.SAMPLE_RATE)
     except FileNotFoundError:
         raise HTTPException(404, f"File {audio_loc} not found")
+
+    media_file = None
+    try:
+        media_file = db.query(MediaFile).filter(
+            MediaFile.file_name == audio_path).first()
+        if media_file is None:
+            media_file = MediaFile(file_name=audio_path)
+            db.add(media_file)
+            db.refresh(media_file)
+        logger.warn(media_file)
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(
+            500, "error"
+        )
+    logger.warn(media_file.__dict__)
     predictions = []
+    prediction_response = []
     for time, audio_snip in iterate_call(resampled_audio):
         confidence = model(audio_snip)
-        if confidence > MODEL_CONFIDENCE_THRESHOLD:
+        if confidence > settings.MODEL_CONFIDENCE_THRESHOLD:
             predictions.append(
                 Prediction(
-                    phrase=utterance, time=time / SAMPLE_RATE, confidence=confidence
+                    phrase=utterance, time=time / settings.SAMPLE_RATE, confidence=confidence,
+                    media_id=media_file.id
                 )
             )
-
-    
-    return predictions
+            prediction_response.append(
+                PredictionModel(phrase=utterance, time=time / settings.SAMPLE_RATE, confidence=confidence)
+            )
+    # db.bulk_save_objects(predictions)
+    return prediction_response
 
 
 def load_resampled(audio_loc: str, resample_rate: int = 8000) -> torch.tensor:
@@ -100,7 +123,6 @@ def load_resampled(audio_loc: str, resample_rate: int = 8000) -> torch.tensor:
         FileNotFoundError: If the audio_loc is not a valid audio file
     """
     try:
-        print(audio_loc)
         audio, rate = torchaudio.load(audio_loc)
     except RuntimeError as e:
         raise FileNotFoundError(e)

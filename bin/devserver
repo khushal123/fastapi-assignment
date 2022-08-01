@@ -1,0 +1,5 @@
+!#bin/bash
+
+.locals.env
+echo $DATABASE_URL
+uvicorn app.inference:app --reload
