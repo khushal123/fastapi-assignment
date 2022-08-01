@@ -8,9 +8,8 @@ import torchaudio.transforms as transforms
 from fastapi import FastAPI, HTTPException
 from app.config import settings
 from app.database.base import Session
-from app.database.models import Prediction, MediaFile
+from app.database.confidence.models import Prediction, MediaFile
 from fastapi.params import Depends
-from app.database.base import get_db
 import logging
 
 
@@ -44,6 +43,14 @@ MODEL_DICT = {
     "is": Model(),
     "recorded": Model(),
 }
+
+
+def get_db():
+    db = Session()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 @app.get("/")
@@ -82,6 +89,8 @@ def generate_phrase_detections(utterance: str, audio_path: str, db: Session = De
         if media_file is None:
             media_file = MediaFile(file_name=audio_path)
             db.add(media_file)
+            db.commit()
+            db.flush()
             db.refresh(media_file)
         logger.warn(media_file)
     except Exception as e:
@@ -102,7 +111,8 @@ def generate_phrase_detections(utterance: str, audio_path: str, db: Session = De
                 )
             )
             prediction_response.append(
-                PredictionModel(phrase=utterance, time=time / settings.SAMPLE_RATE, confidence=confidence)
+                PredictionModel(phrase=utterance, time=time /
+                                settings.SAMPLE_RATE, confidence=confidence)
             )
     # db.bulk_save_objects(predictions)
     return prediction_response
