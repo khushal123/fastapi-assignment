@@ -1,8 +1,5 @@
 #!/bin/bash
 
-while sleep 1
-do
-    echo "Loading config..."
-    . bin/locals.env
-    uvicorn app.inference:app --reload
-done
+echo "Loading config..."
+. bin/docker.env
+docker compose up
