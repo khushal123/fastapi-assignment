@@ -7,7 +7,8 @@ class MediaFile(Base):
     __tablename__ = "media_files"
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     file_name = Column(String(255), index=True)
-    predictions = relationship('Prediction', backref="media_file")
+    duration = Column(Integer)
+    confidences = relationship('Prediction', backref="media_file")
 
 
 class Prediction(Base):

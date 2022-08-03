@@ -8,10 +8,10 @@ import torchaudio.transforms as transforms
 from fastapi import FastAPI, HTTPException
 from app.config import settings
 from app.database.base import Session
-from app.database.confidence.models import Prediction, MediaFile
 from fastapi.params import Depends
+from app.database.confidence.models import Prediction
+from app.database.confidence.service import AppService
 import logging
-
 
 app = FastAPI()
 logger = logging.getLogger("app")
@@ -78,27 +78,18 @@ def generate_phrase_detections(utterance: str, audio_path: str, db: Session = De
 
     try:
         audio_loc = os.path.join(f"{os.getcwd()}/app", audio_path)
-        resampled_audio = load_resampled(audio_loc, settings.SAMPLE_RATE)
+        resampled_audio, duration = load_resampled(
+            audio_loc, settings.SAMPLE_RATE)
     except FileNotFoundError:
         raise HTTPException(404, f"File {audio_loc} not found")
 
     media_file = None
+    service = AppService(db)
     try:
-        media_file = db.query(MediaFile).filter(
-            MediaFile.file_name == audio_path).first()
-        if media_file is None:
-            media_file = MediaFile(file_name=audio_path)
-            db.add(media_file)
-            db.commit()
-            db.flush()
-            db.refresh(media_file)
-        logger.warn(media_file)
+        media_file = service.get_media_by_name(audio_path, duration)
     except Exception as e:
-        logger.error(e)
-        raise HTTPException(
-            500, "error"
-        )
-    logger.warn(media_file.__dict__)
+        return HTTPException(500, "Internal server error")
+
     predictions = []
     prediction_response = []
     for time, audio_snip in iterate_call(resampled_audio):
@@ -114,8 +105,22 @@ def generate_phrase_detections(utterance: str, audio_path: str, db: Session = De
                 PredictionModel(phrase=utterance, time=time /
                                 settings.SAMPLE_RATE, confidence=confidence)
             )
-    # db.bulk_save_objects(predictions)
+    save_predictions = service.save_bulk(predictions=predictions)
     return prediction_response
+
+
+@app.get("/api/confidence/{page}/{limit}")
+def get_audio_confidences(page: int = 0, limit: int = 10, db: Session = Depends(get_db)):
+    """Return list of audio files and their confidence scores. 
+    """
+    try:
+        service = AppService(db)
+        return service.get_confidence_list(page=page, limit=limit)
+    except Exception as e:
+        logger.error(e)
+        raise HTTPException(
+            404, "Something went wrong"
+        )
 
 
 def load_resampled(audio_loc: str, resample_rate: int = 8000) -> torch.tensor:
@@ -134,11 +139,13 @@ def load_resampled(audio_loc: str, resample_rate: int = 8000) -> torch.tensor:
     """
     try:
         audio, rate = torchaudio.load(audio_loc)
+        num_frames = torchaudio.info(audio_loc).num_frames
+        duration = num_frames/rate
     except RuntimeError as e:
         raise FileNotFoundError(e)
 
     resampler = transforms.Resample(rate, resample_rate)
-    return resampler(audio)
+    return [resampler(audio), duration]
 
 
 def iterate_call(

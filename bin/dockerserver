@@ -3,6 +3,6 @@
 while sleep 1
 do
     echo "Loading config..."
-    . bin/docker.env
+    . bin/locals.env
     uvicorn app.inference:app --reload
 done

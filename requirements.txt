@@ -26,3 +26,4 @@ watchgod==0.7
 websockets==10.1
 SQLAlchemy==1.4
 psycopg2-binary
+alembic==1.8.1

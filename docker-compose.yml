@@ -3,9 +3,11 @@ services:
   api:
     build: .
     ports:
-      - 8000:8000
+      - ${PORT}:${PORT}
     links:
       - postgres
 
   postgres:
     image: postgres:latest
+    env_file: bin/docker.env
+
